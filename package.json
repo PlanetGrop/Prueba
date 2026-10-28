@@ -1,0 +1,22 @@
+{
+  "name": "clave-credentials",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Buscador privado de credenciales conectado a Google Sheets",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "preview": "node --env-file-if-exists=.env server.js --preview",
+    "dev": "node --watch --env-file-if-exists=.env server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.9"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "express-session": "^1.18.2",
+    "fflate": "0.8.3",
+    "helmet": "^8.1.0"
+  }
+}
