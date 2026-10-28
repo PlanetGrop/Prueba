@@ -10,6 +10,19 @@
   <script src="./app.js" defer></script>
 </head>
 <body>
+  <section id="login-screen" class="login-screen hidden" aria-labelledby="login-title">
+    <div class="login-card">
+      <a class="brand" href="/" aria-label="Clave, inicio"><span class="brand-icon">k<span>·</span></span>clave<span class="brand-dot">.</span></a>
+      <div class="login-symbol"><span data-icon="lock"></span></div>
+      <div class="eyebrow">EL ESPACIO PRIVADO DE TU EQUIPO</div>
+      <h1 id="login-title">Tus accesos.<br>En buenas manos<span>.</span></h1>
+      <p>Iniciá sesión con tu cuenta de Google autorizada para consultar las credenciales del equipo.</p>
+      <a class="button primary login-google" href="/auth/google"><span class="google-letter" aria-hidden="true">G</span>Iniciar sesión con Google<span aria-hidden="true">↗</span></a>
+      <div id="login-error" class="notice hidden" role="status"></div>
+      <div class="login-footnote"><span data-icon="shield"></span>Acceso reservado a las personas autorizadas.</div>
+    </div>
+    <p class="login-caption">Clave · Menos búsquedas. Más control.</p>
+  </section>
   <aside class="sidebar">
     <a class="brand" href="/" aria-label="Clave, inicio"><span class="brand-icon">k<span>·</span></span>clave<span class="brand-dot">.</span></a>
     <div class="workspace"><span class="workspace-icon">E</span><div><strong>Mi espacio de trabajo</strong><small>Gestión de accesos</small></div><span class="workspace-chevron">⌄</span></div>

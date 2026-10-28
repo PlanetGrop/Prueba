@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: clave-cuentas
+    runtime: docker
+    plan: free
+    numInstances: 1
+    autoDeploy: false
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: SESSION_DB_PATH
+        value: /tmp/clave/sessions.sqlite
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_ALLOWED_EMAILS
+        sync: false
+      - key: GOOGLE_SPREADSHEET_ID
+        sync: false

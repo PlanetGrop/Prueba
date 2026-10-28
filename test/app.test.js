@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
+import session from 'express-session';
 import { unzipSync, strFromU8 } from 'fflate';
 import { createHash } from 'node:crypto';
 import { createApp } from '../server.js';
@@ -39,7 +40,7 @@ const config = {
 async function serve(t, app) {
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
-  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(() => { app.locals.close?.(); resolve(); }); }));
   return `http://127.0.0.1:${server.address().port}`;
 }
 test('demo uses fake data, security headers, and no caching', async t => {
@@ -126,7 +127,7 @@ test('only demo preview allows embedding by ChatGPT; real credentials and produc
   assert.equal(response.headers.get('x-frame-options'), null);
   assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'self' https:\/\/chatgpt\.com https:\/\/chat\.openai\.com;/);
   assert.ok(!response.headers.get('content-security-policy').includes('frame-ancestors *'));
-  for (const settings of [{}, config, { NODE_ENV: 'production', APP_URL: 'https://private.example' }]) {
+  for (const settings of [{}, config, { ...config, NODE_ENV: 'production', APP_URL: 'https://private.example', SESSION_DB_PATH: ':memory:' }]) {
     const url = await serve(t, createApp(settings, fetch, { preview: Boolean(Object.keys(settings).length) }));
     const headers = (await fetch(url)).headers;
     assert.equal(headers.get('x-frame-options'), 'SAMEORIGIN');
@@ -134,24 +135,26 @@ test('only demo preview allows embedding by ChatGPT; real credentials and produc
   }
 });
 
-async function login(t, email = 'owner@example.com', sheetResult = { values: teamSheet }) {
+async function login(t, email = 'owner@example.com', sheetResult = { values: teamSheet }, options = {}) {
   const calls = [];
-  const mockGoogle = async (url, options) => {
-    calls.push({ url, options });
+  const mockGoogle = async (url, requestOptions) => {
+    calls.push({ url, options: requestOptions });
     let body;
     if (url.includes('/token')) body = { access_token: 'private-server-token', refresh_token: 'private-refresh-token', expires_in: 3600 };
-    else if (url.includes('userinfo')) body = { email, email_verified: true };
+    else if (url.includes('userinfo')) body = { email, email_verified: options.verified !== false };
     else body = sheetResult;
     return { ok: true, status: 200, json: async () => body };
   };
-  const url = await serve(t, createApp(config, mockGoogle));
-  const auth = await fetch(`${url}/auth/google`, { redirect: 'manual' });
+  const settings = { ...config, ...options.config };
+  const url = await serve(t, createApp(settings, mockGoogle, { sessionStore: options.store }));
+  const headers = settings.NODE_ENV === 'production' ? { 'X-Forwarded-Proto': 'https' } : {};
+  const auth = await fetch(`${url}/auth/google`, { redirect: 'manual', headers });
   let cookie = auth.headers.get('set-cookie').split(';')[0];
   const redirect = new URL(auth.headers.get('location'));
   assert.equal(redirect.searchParams.get('code_challenge_method'), 'S256');
-  const callback = await fetch(`${url}/auth/google/callback?code=test&state=${redirect.searchParams.get('state')}`, { headers: { Cookie: cookie }, redirect: 'manual' });
+  const callback = await fetch(`${url}/auth/google/callback?code=test&state=${redirect.searchParams.get('state')}`, { headers: { ...headers, Cookie: cookie }, redirect: 'manual' });
   if (callback.headers.get('set-cookie')) cookie = callback.headers.get('set-cookie').split(';')[0];
-  return { url, cookie, callback, calls };
+  return { url, cookie, callback, calls, headers };
 }
 test('Google OAuth authorizes only the configured owner; tokens remain server-side', async t => {
   const { url, cookie, calls } = await login(t);
@@ -179,4 +182,70 @@ test('invalid sheet headers return a useful error instead of a misleading empty 
 test('production refuses HTTP and short session secrets', () => {
   assert.throws(() => createApp({ ...config, NODE_ENV: 'production' }), /HTTPS/);
   assert.throws(() => createApp({ ...config, SESSION_SECRET: 'short' }), /32/);
+});
+
+test('team allowlist admits another authorized account and rejects an unverified identity', async t => {
+  const team = { GOOGLE_ALLOWED_EMAILS: 'OWNER@example.com, teammate@example.com' };
+  const accepted = await login(t, 'teammate@example.com', { values: teamSheet }, { config: team });
+  assert.equal(accepted.callback.headers.get('location'), '/');
+  assert.equal((await fetch(`${accepted.url}/api/credentials`, { headers: { Cookie: accepted.cookie } })).status, 200);
+  const rejected = await login(t, 'teammate@example.com', { values: teamSheet }, { config: team, verified: false });
+  assert.equal(rejected.callback.headers.get('location'), '/?auth=denied');
+  assert.equal((await fetch(`${rejected.url}/api/credentials`, { headers: { Cookie: rejected.cookie } })).status, 401);
+});
+
+test('production enforces HTTPS, secure cookies, authentication and disables source exports', async t => {
+  const settings = { NODE_ENV: 'production', APP_URL: 'https://clave.example', TRUST_PROXY: '1', SESSION_DB_PATH: ':memory:' };
+  const { url, cookie, headers, callback } = await login(t, 'owner@example.com', { values: teamSheet }, { config: settings });
+  const sessionCookie = callback.headers.get('set-cookie');
+  assert.match(sessionCookie, /__Host-clave\.sid=/);
+  assert.match(sessionCookie, /; Secure/);
+  assert.match(sessionCookie, /; HttpOnly/);
+  assert.match(sessionCookie, /; SameSite=Lax/);
+  assert.equal((await fetch(`${url}/healthz`)).status, 200);
+  assert.equal((await fetch(`${url}/api/credentials`)).status, 400);
+  assert.equal((await fetch(`${url}/api/credentials`, { headers })).status, 401);
+  const status = await fetch(`${url}/api/status`, { headers: { ...headers, Cookie: cookie } }).then(r => r.json());
+  assert.equal(status.localTools, false);
+  assert.equal(status.authenticated, true);
+  assert.equal((await fetch(`${url}/api/credentials`, { headers: { ...headers, Cookie: cookie } })).status, 200);
+  assert.equal((await fetch(`${url}/download/clave-local.zip`, { headers })).status, 404);
+  assert.equal((await fetch(`${url}/api/project-export/windows`, { headers })).status, 404);
+  const logout = await fetch(`${url}/auth/logout`, { method: 'POST', headers: { ...headers, Cookie: cookie, Origin: settings.APP_URL } });
+  assert.equal(logout.status, 200);
+  assert.equal((await fetch(`${url}/api/credentials`, { headers: { ...headers, Cookie: cookie } })).status, 401);
+});
+
+test('production fails closed without required secrets or Google settings', () => {
+  assert.throws(() => createApp({ NODE_ENV: 'production', APP_URL: 'https://clave.example' }), /credenciales de Google/);
+  assert.throws(() => createApp({ ...config, NODE_ENV: 'production', APP_URL: 'https://clave.example', SESSION_SECRET: '' }), /SESSION_SECRET/);
+  assert.throws(() => createApp({ ...config, APP_URL: 'https://user:password@clave.example' }), /sin rutas/);
+  assert.throws(() => createApp({ ...config, GOOGLE_ALLOWED_EMAILS: 'not-an-email' }), /no válido/);
+});
+
+test('repeated login attempts are rate-limited', async t => {
+  const url = await serve(t, createApp({}));
+  let response;
+  for (let count = 0; count < 21; count++) response = await fetch(`${url}/auth/google`, { redirect: 'manual' });
+  assert.equal(response.status, 429);
+  assert.match((await response.json()).error, /Demasiados intentos/);
+});
+
+test('expired sessions are rejected even when a client keeps polling', async t => {
+  const store = new session.MemoryStore();
+  const { url, cookie } = await login(t, 'owner@example.com', { values: teamSheet }, { store });
+  const sessions = await new Promise((resolve, reject) => store.all((error, values) => error ? reject(error) : resolve(values)));
+  const [sid, value] = Object.entries(sessions).find(([, value]) => value.google);
+  value.google.authenticatedAt = Date.now() - 16 * 60 * 1000;
+  await new Promise((resolve, reject) => store.set(sid, value, error => error ? reject(error) : resolve()));
+  assert.equal((await fetch(`${url}/api/credentials`, { headers: { Cookie: cookie } })).status, 401);
+  const status = await fetch(`${url}/api/status`, { headers: { Cookie: cookie } }).then(r => r.json());
+  assert.equal(status.authenticated, false);
+});
+
+test('removing an account from the allowlist invalidates its existing session', async t => {
+  const store = new session.MemoryStore();
+  const { cookie } = await login(t, 'teammate@example.com', { values: teamSheet }, { store, config: { GOOGLE_ALLOWED_EMAILS: 'owner@example.com,teammate@example.com' } });
+  const updated = await serve(t, createApp(config, fetch, { sessionStore: store }));
+  assert.equal((await fetch(`${updated}/api/credentials`, { headers: { Cookie: cookie } })).status, 401);
 });

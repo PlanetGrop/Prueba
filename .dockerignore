@@ -1,0 +1,13 @@
+.git
+node_modules
+.env
+.env.*
+!.env.example
+!.env.production.example
+.data
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+coverage
+test-results
+playwright-report

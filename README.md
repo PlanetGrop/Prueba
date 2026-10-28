@@ -54,12 +54,41 @@ La interfaz utiliza **CSS normal**, sin Tailwind, compilación de CSS, CDN ni fu
 
 `npm test` ejecuta las pruebas de lectura, acceso y carga HTTP de los recursos. `npm run dev` reinicia el servidor al cambiar archivos.
 
+## URL pública y acceso del equipo
+
+El proyecto incluye un `Dockerfile` con Node.js 24 y `render.yaml` para una única instancia en Render, con el plan gratuito seleccionado en el archivo. Verifica las condiciones vigentes y cualquier cargo en Render antes de confirmar. No se ha creado un servicio ni activado un plan desde este repositorio.
+
+La URL será pública; los datos requieren iniciar sesión con Google y un correo autorizado. **Todas las personas autorizadas ven todas las credenciales de la hoja**, según el modelo acordado. Cada persona también debe tener acceso privado de lectura a esa hoja en Google Sheets. Esta versión no ofrece permisos distintos por departamento.
+
+### Crear el servicio
+
+1. Crea una cuenta en https://render.com y conecta GitHub, concediendo acceso solo a `PlanetGrop/Prueba` cuando sea posible.
+2. Selecciona **New → Blueprint**, el repositorio y su rama `main`. Revisa el servicio `clave-cuentas`, el plan y las variables antes de confirmar. La alternativa manual es **New → Web Service**, el mismo repositorio, entorno **Docker**, una instancia y health check `/healthz`.
+3. Introduce los valores privados `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_SPREADSHEET_ID` y `GOOGLE_ALLOWED_EMAILS`. El último contiene los correos separados por comas, por ejemplo `persona1@example.com,persona2@example.com`. No pegues el secreto en el chat ni en archivos de GitHub. Opcionalmente añade `GOOGLE_SHEET_TAB` con el nombre exacto de la pestaña.
+4. El Blueprint genera un `SESSION_SECRET` aleatorio. En configuración manual, genera uno de al menos 32 caracteres y guárdalo en los ajustes seguros del servicio. Configura también `NODE_ENV=production`, `TRUST_PROXY=1` y `SESSION_DB_PATH=/tmp/clave/sessions.sqlite`. `TRUST_PROXY=1` supone un único proxy de confianza delante del proceso; no expongas directamente el puerto Node a internet.
+5. Render proporciona `RENDER_EXTERNAL_URL`; la aplicación lo usa como origen si no has configurado `APP_URL`. Copia la URL **real que muestre Render** cuando el servicio esté creado. No uses `localhost` en la configuración pública.
+6. En Google Auth Platform → Clientes, abre tu cliente OAuth y añade `https://TU-URL-REAL/auth/google/callback` como URI de redireccionamiento autorizado. Conserva el callback de localhost si también quieres utilizar la instalación de Windows.
+7. Agrega a cada integrante en **Público → Usuarios de prueba** mientras la aplicación OAuth siga en modo Prueba. Comparte la hoja privadamente con esos mismos correos como lectores. No publiques la hoja.
+8. Abre la URL HTTPS en Chrome. Debe mostrarse la pantalla de inicio de sesión. Prueba tu cuenta, otra autorizada y una no autorizada. En una ventana de incógnito, `/api/credentials` debe devolver 401 sin mostrar datos. Verifica también cierre de sesión y sincronización con datos ficticios antes de usarla para el equipo.
+
+No se puede validar el inicio de sesión real del servicio hasta que estén configurados su URL, secretos y callback en Google. El acceso de prueba de Google seguirá mostrando el aviso de aplicación no verificada; utiliza únicamente el proyecto y cliente que administras. Si luego se distribuye fuera del grupo de prueba, revisa los requisitos de verificación de Google.
+
+### Sesiones y disponibilidad
+
+- En producción se requieren las credenciales de Google, la lista de correos y una clave de sesión estable. Si faltan, el proceso no arranca con una demostración pública por accidente.
+- Las sesiones usan cookies `__Host-`, Secure, HttpOnly y SameSite=Lax. El servidor hace vencer la autorización a los 15 minutos aunque se siga consultando la hoja; el navegador cierra la vista tras cinco minutos de inactividad.
+- Los tokens de Google se cifran con AES-256-GCM en SQLite antes de escribirlos en el servidor. La clave se deriva de `SESSION_SECRET` con HKDF. Las contraseñas de la hoja no se guardan en la base de sesiones.
+- La configuración gratuita usa disco temporal: un reinicio o despliegue puede exigir iniciar sesión otra vez. El servicio puede suspenderse por inactividad y tardar en arrancar. Los cambios siguen guardándose en Google Sheets.
+- Esta configuración soporta **una instancia**. Para escalar a varios procesos se necesita un almacén compartido y una revisión de los límites de solicitudes. No aumentes las instancias conservando una base SQLite local por instancia.
+- Para revocar a una persona, quita su correo de `GOOGLE_ALLOWED_EMAILS`, aplica la nueva configuración en el servicio y revisa también sus permisos de la hoja. Cada solicitud revalida el correo de la sesión contra la lista configurada. Usa verificación en dos pasos en las cuentas de Google del equipo.
+- Para un dominio propio, conecta el dominio en Render, espera a que esté activo su HTTPS, configura `APP_URL=https://TU-DOMINIO` y añade el callback exacto en Google. Un dominio propio es opcional.
+
 ## Conectar la hoja privada
 
 1. En Google Cloud Console crea o selecciona un proyecto y habilita **Google Sheets API**.
 2. Configura la pantalla de consentimiento de Google Auth Platform. Si la aplicación está en modo de prueba, agrega tu correo como usuario de prueba. Para una organización, utiliza una aplicación interna cuando esté disponible. Una aplicación externa distribuida podría requerir verificación de Google.
 3. Crea un cliente OAuth de tipo **Aplicación web**. Registra como URI de redirección `http://localhost:3000/auth/google/callback` para desarrollo, o `https://TU-DOMINIO/auth/google/callback` para un despliegue. Debe coincidir exactamente con `APP_URL` más `/auth/google/callback`.
-4. Copia `.env.example` a `.env` y configura en privado `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_EMAIL` y `GOOGLE_SPREADSHEET_ID`. Nunca envíes secretos por chat ni los añadas a Git. `GOOGLE_ALLOWED_EMAIL` es el único correo admitido y debe tener acceso a la hoja. `SESSION_SECRET` es opcional: por defecto se genera una clave criptográfica en memoria en cada arranque. Si proporcionas una clave propia, debe tener al menos 32 caracteres.
+4. Copia `.env.example` a `.env` y configura en privado `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_EMAIL` y `GOOGLE_SPREADSHEET_ID`. Nunca envíes secretos por chat ni los añadas a Git. Para un equipo, `GOOGLE_ALLOWED_EMAILS` acepta varios correos separados por comas y tiene prioridad sobre `GOOGLE_ALLOWED_EMAIL`. Todas las cuentas deben tener acceso a la hoja. `SESSION_SECRET` es opcional solo en desarrollo: por defecto se genera una clave criptográfica en memoria en cada arranque. Si proporcionas una clave propia, debe tener al menos 32 caracteres.
 5. El ID es el segmento de la URL entre `/spreadsheets/d/` y `/edit`. No se necesita publicar ni compartir públicamente la hoja. Si hay varias pestañas, indica la deseada en `GOOGLE_SHEET_TAB`; sin ese valor se lee la primera.
 6. Reinicia el servidor e inicia sesión con **Conectar Google Sheets**. Edita un dato ficticio en la hoja de prueba y pulsa Sincronizar, o espera 60 segundos, para comprobar la integración real.
 
@@ -81,11 +110,11 @@ También se admiten hojas simples con una fila de encabezados: `Servicio`, `Corr
 ## Seguridad y límites de esta primera versión
 
 - El servidor tiene acceso de solo lectura a la hoja indicada. El permiso OAuth solicitado permite leer las hojas accesibles para la cuenta autorizada; usa una cuenta dedicada con acceso limitado si necesitas reducir ese alcance.
-- Solo el correo autorizado puede ver datos reales. La autorización OAuth usa estado aleatorio, PKCE y renovación de sesión al iniciar sesión. Los tokens permanecen en memoria del servidor; la cookie de sesión es HttpOnly y SameSite=Lax.
+- Solo los correos autorizados pueden ver datos reales. La autorización OAuth usa estado aleatorio, PKCE y renovación de sesión al iniciar sesión. En desarrollo, las sesiones viven en memoria; en producción los tokens se guardan cifrados en SQLite. Las cookies son HttpOnly y SameSite=Lax, y en producción también Secure.
 - No se guardan contraseñas en disco, localStorage ni IndexedDB. Sheets sigue siendo el origen y el navegador recibe las contraseñas durante una sesión autorizada para poder mostrarlas y copiarlas. No hay una base de datos cifrada propia. Google Sheets no sustituye a un gestor de contraseñas con cifrado de extremo a extremo.
 - Las contraseñas mostradas se ocultan tras 20 segundos y al perder el foco. La sesión se cierra después de cinco minutos de inactividad en la interfaz y la cookie vence a los 15 minutos. El portapapeles queda bajo control del sistema operativo: no se borra automáticamente.
 - Las respuestas llevan `Cache-Control: no-store`; hay una política CSP y restricciones de origen para el cierre de sesión. No hay analítica, fuentes externas ni scripts de terceros. Los favoritos viven solo en memoria durante la sesión y sus IDs corresponden a la posición de las filas.
-- Las sesiones y los tokens viven en memoria de un único proceso. Un reinicio requiere iniciar sesión de nuevo. Esta versión está diseñada para uso personal con una cuenta autorizada; antes de un servicio con múltiples instancias se necesita un almacén seguro de sesiones, límites de solicitudes y una revisión de seguridad y permisos.
+- La configuración de producción es para una sola instancia. Aplica límites de solicitudes y de intentos de acceso. Cambiar `SESSION_SECRET` invalida las sesiones guardadas. El disco temporal de Render puede perder las sesiones al reiniciar; se vuelve a entrar con Google.
 - En producción, usa HTTPS y `NODE_ENV=production`; configura `APP_URL` con el origen real. Usa `TRUST_PROXY=1` exclusivamente detrás de un único proxy confiable. No actives producción con HTTP ni registres cuerpos de respuestas o secretos en un proxy.
 
 Las pruebas automatizadas simulan Google y verifican el formato de la hoja, autorización, restricción de correo, cierre de sesión y errores. La conexión con una hoja real requiere tus valores OAuth y todavía debe validarse con datos ficticios antes de usar credenciales reales.

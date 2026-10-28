@@ -52,6 +52,8 @@ function toast(message) {
 function notice(message) {
   $('notice').textContent = message;
   $('notice').classList.toggle('hidden', !message);
+  $('login-error').textContent = message;
+  $('login-error').classList.toggle('hidden', !message);
 }
 function hidePasswords(render = true) {
   for (const timer of state.revealTimers.values()) clearTimeout(timer);
@@ -158,6 +160,10 @@ function renderSummary() {
 }
 function renderConnection() {
   const real = state.mode === 'google';
+  const locked = real && !state.authenticated;
+  document.body.classList.toggle('locked', locked);
+  $('login-screen').classList.toggle('hidden', !locked);
+  $('export-windows').classList.toggle('hidden', state.localTools === false);
   $('connection-title').textContent = real ? state.authenticated ? 'Tu hoja está conectada' : 'Conecta tu hoja de cálculo' : 'Vista de demostración';
   $('connection-description').textContent = real ? 'Lectura privada de Google Sheets. Los cambios se consultan cada 60 segundos.' : 'Explora la interfaz con datos ficticios antes de conectar tu hoja.';
   $('connection-badge').className = `badge${real && state.authenticated ? '' : ' demo'}`;
